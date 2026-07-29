@@ -6,6 +6,8 @@
 
 Runs ~30 independent checks across seven categories against your deployed Open Brain and prints a pass/skip/fail dashboard. Optional features (REST API, ob-graph, enhanced-thoughts, smart-ingest) are detected automatically and skipped with a clear reason rather than failing the run, so the same script works on stock core installs and fully-loaded instances.
 
+It also has an Aegis-local mode for the Supabase replacement recipe. `node smoke-all.js --aegis-local` probes the local API at `http://127.0.0.1:8787` by default and does not require SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.
+
 ## Why Use This
 
 Open Brain is a lot of moving parts -- a database, an Edge Function, a secret access key, RLS policies, and optionally more tables and endpoints from recipes and integrations. When something is wrong it is usually one specific thing: a missing `GRANT`, a mismatched access key, a forgotten column, a function that failed to deploy. This harness catches those misconfigurations before you waste an hour wondering why Claude Desktop sees no tools or why semantic search returns nothing.
@@ -27,11 +29,15 @@ Run it:
 6. **Access Key Enforcement** -- The Supabase PostgREST gateway rejects requests with no `apikey` and with an invalid `apikey`. This runs **before** RLS, so these checks alone do not prove RLS is configured -- see category 7.
 7. **Row-Level Security** -- Actually probes whether RLS is on and policies are restrictive. Tries an optional helper RPC (`pg_class_rls`) to read `pg_catalog.pg_class.relrowsecurity`. Also, if `SUPABASE_ANON_KEY` is set, does an anon-key read of `public.thoughts` and **fails loud** if rows come back (means RLS is off or a permissive `ALL USING (true)` policy is leaking data). Without `SUPABASE_ANON_KEY`, the anon probe is skipped with a clear note that RLS is unverified.
 
+In `--aegis-local` mode the harness runs one read-only **Aegis Local** category instead of the hosted Supabase categories. It checks local `/health`, `/count`, migrated backup count, hosted-shape REST aliases, Agent Memory health alias, MCP `tools/list`, MCP `thought_stats`, text search response shape, access-key rejection, `x-ingest-key`, and backup archive count.
+
 ## Prerequisites
 
 - Working Open Brain setup ([guide](../../docs/01-getting-started.md))
 - Node.js 18 or later (uses the built-in `fetch` and `AbortController`)
-- A local `.env.local` file (or exported environment variables) sitting next to `smoke-all.js`. The script looks for `.env.local` in its own directory first (so `node recipes/brain-smoke-test/smoke-all.js` works from any cwd) and falls back to the current working directory.
+- A local `.env.local` file (or exported environment variables) sitting next to `smoke-all.js`. Hosted mode looks for `.env.local` in its own directory first (so `node recipes/brain-smoke-test/smoke-all.js` works from any cwd) and falls back to the current working directory.
+
+For Aegis-local mode, run from this repository after `OB1/recipes/aegis-local-brain` is set up. The local mode reads `BRAIN_ACCESS_KEY` from the environment, `.env.local` next to `smoke-all.js`, or `OB1/recipes/aegis-local-brain/.env`, and uses `AEGIS_LOCAL_BRAIN_URL` or `BRAIN_URL` when set. Otherwise it defaults to `http://127.0.0.1:8787`. It ignores .env.local in the caller's current directory so parent folders cannot accidentally override the local Aegis recipe.
 
 ## Credential Tracker
 
@@ -95,6 +101,11 @@ node smoke-all.js
 
 # Machine-readable JSON -- pipe into jq, a log aggregator, or CI assertions
 node smoke-all.js --json
+
+# Read-only Aegis-local replacement smoke. Uses BRAIN_ACCESS_KEY from env,
+# .env.local, or OB1/recipes/aegis-local-brain/.env.
+node smoke-all.js --aegis-local
+node smoke-all.js --aegis-local --json
 
 # Opt in to the destructive Core Features category. Inserts a uniquely-
 # tagged row via the service-role key, triggers embedding + LLM metadata

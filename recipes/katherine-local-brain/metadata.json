@@ -1,0 +1,8 @@
+{
+  "name": "katherine-local-brain",
+  "description": "Katherine-lane Open Brain instance using Postgres, pgvector, PostgREST, and local Ollama embeddings without the hosted Supabase project or full Supabase stack.",
+  "author": "Sea Ranch AI",
+  "version": "0.1.0",
+  "services": ["Postgres", "pgvector", "PostgREST", "Ollama"],
+  "tags": ["open-brain", "katherine", "self-hosted", "pgvector", "ollama"]
+}

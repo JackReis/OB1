@@ -27,3 +27,16 @@ docs/walkthroughs/*/public/
 docs/assets/agent-memory/promotional/generated-backgrounds/**/result.json
 docs/assets/agent-memory/screenshots/**/.chrome-*/
 integrations/openclaw-agent-memory/dist/
+
+# Backup data (contains actual JSON exports)
+recipes/brain-backup/backup/
+
+# Bot logs
+clients/katherine-telegram-bot/bot.out.log
+clients/katherine-telegram-bot/bot.err.log
+
+# Dev tooling
+.claude/hooks/
+
+# Backup env files
+recipes/aegis-local-brain/.env.bak-*

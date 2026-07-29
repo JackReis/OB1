@@ -7,41 +7,49 @@
  *
  * Usage:
  *   node backup-brain.mjs
+ *   node backup-brain.mjs --preflight [--json]
  *
  * The script reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY from
- * environment variables or from a .env.local file in the current directory.
+ * environment variables or from a .env.local file in the script directory.
+ * --preflight validates that local setup without making a hosted request.
  */
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const SCRIPT_DIR = process.cwd();
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+const FLAG_PREFLIGHT = args.includes("--preflight");
+const FLAG_JSON = args.includes("--json");
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
-const PAGE_SIZE = 1000;
+// Reduced from 1000: thoughts rows carry large embedding vectors (~20KB/row);
+// 1000/page exceeded the PostgREST statement timeout. 200/page stays well under.
+export const PAGE_SIZE = 200;
 
-const TABLES = [
-  { name: "thoughts",         orderBy: "id" },
-  { name: "entities",         orderBy: "id" },
-  { name: "edges",            orderBy: "id" },
-  { name: "thought_entities", orderBy: "thought_id,entity_id" },
-  { name: "reflections",      orderBy: "id" },
-  { name: "ingestion_jobs",   orderBy: "id" },
-  { name: "ingestion_items",  orderBy: "id" },
+// Reconciled 2026-06-28 to the live hosted schema (the old entities/edges/
+// reflections/ingestion_* tables were dropped in a redesign). Only these three
+// hold data: thoughts=27521, agent_memories=20, agent_memory_audit_events=14.
+export const TABLES = [
+  { name: "thoughts",                   orderBy: "id" },
+  { name: "agent_memories",             orderBy: "id" },
+  { name: "agent_memory_audit_events",  orderBy: "id" },
 ];
 
 // ---------------------------------------------------------------------------
 // Env loading
 // ---------------------------------------------------------------------------
 
-function loadEnvFile() {
-  const envPath = path.join(SCRIPT_DIR, ".env.local");
+export function loadEnvFile(envPath) {
+  const filePath = envPath || path.join(SCRIPT_DIR, ".env.local");
   const vars = {};
-  if (fs.existsSync(envPath)) {
-    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+  if (fs.existsSync(filePath)) {
+    for (const line of fs.readFileSync(filePath, "utf8").split("\n")) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) continue;
       const eqIdx = trimmed.indexOf("=");
@@ -54,6 +62,7 @@ function loadEnvFile() {
 }
 
 const envVars = loadEnvFile();
+const ENV_FILE_PATH = path.join(SCRIPT_DIR, ".env.local");
 
 const SUPABASE_URL =
   process.env.SUPABASE_URL ||
@@ -65,20 +74,114 @@ const SERVICE_KEY =
   envVars.SUPABASE_SERVICE_ROLE_KEY ||
   "";
 
-if (!SUPABASE_URL) {
-  console.error(
-    "ERROR: SUPABASE_URL not found.\n" +
-    "Either export it or add it to .env.local in the current directory."
-  );
-  process.exit(1);
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+export function supabaseHost(url) {
+  if (!url) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
 }
 
-if (!SERVICE_KEY) {
-  console.error(
-    "ERROR: SUPABASE_SERVICE_ROLE_KEY not found.\n" +
-    "Either export it or add it to .env.local in the current directory."
-  );
-  process.exit(1);
+export function backupDir() {
+  return path.join(SCRIPT_DIR, "backup");
+}
+
+export function scriptDirWritable() {
+  try {
+    fs.accessSync(SCRIPT_DIR, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function configErrors() {
+  const errors = [];
+  if (!SUPABASE_URL) errors.push("SUPABASE_URL");
+  if (SUPABASE_URL && !supabaseHost(SUPABASE_URL)) errors.push("SUPABASE_URL_INVALID");
+  if (!SERVICE_KEY) errors.push("SUPABASE_SERVICE_ROLE_KEY");
+  return errors;
+}
+
+export function preflightResult() {
+  const missing = configErrors();
+  const checks = {
+    env_file_present: fs.existsSync(ENV_FILE_PATH),
+    has_supabase_url: Boolean(SUPABASE_URL),
+    supabase_url_valid: !SUPABASE_URL || Boolean(supabaseHost(SUPABASE_URL)),
+    has_service_role_key: Boolean(SERVICE_KEY),
+    backup_parent_writable: scriptDirWritable(),
+    hosted_request_attempted: false,
+  };
+  return {
+    ok: missing.length === 0 && checks.backup_parent_writable,
+    mode: "preflight",
+    env_file_path: ENV_FILE_PATH,
+    backup_dir: backupDir(),
+    supabase_host: supabaseHost(SUPABASE_URL),
+    table_count: TABLES.length,
+    tables: TABLES.map((table) => table.name),
+    missing,
+    checks,
+  };
+}
+
+function printPreflight(result) {
+  if (FLAG_JSON) {
+    process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    return;
+  }
+
+  process.stdout.write("Open Brain Backup Preflight\n");
+  process.stdout.write(`Env file: ${result.checks.env_file_present ? "present" : "absent"} (${result.env_file_path})\n`);
+  process.stdout.write(`SUPABASE_URL: ${result.checks.has_supabase_url ? `set (${result.supabase_host ?? "invalid URL"})` : "missing"}\n`);
+  process.stdout.write(`SUPABASE_SERVICE_ROLE_KEY: ${result.checks.has_service_role_key ? "set" : "missing"}\n`);
+  process.stdout.write(`Backup dir: ${result.backup_dir}\n`);
+  process.stdout.write(`Tables: ${result.table_count}\n`);
+  process.stdout.write("Hosted request attempted: no\n");
+  if (result.missing.length) {
+    process.stdout.write(`Missing/invalid: ${result.missing.join(", ")}\n`);
+  }
+  process.stdout.write(result.ok ? "Result: OK\n" : "Result: FAIL\n");
+}
+
+// Guard: only run CLI behavior when executed directly (not imported)
+const isMain = import.meta.url === `file://${process.argv[1]}`;
+
+if (isMain && FLAG_PREFLIGHT) {
+  const result = preflightResult();
+  printPreflight(result);
+  process.exit(result.ok ? 0 : 2);
+}
+
+const CONFIG_ERRORS = configErrors();
+
+if (isMain) {
+  if (CONFIG_ERRORS.includes("SUPABASE_URL")) {
+    console.error(
+      "ERROR: SUPABASE_URL not found.\n" +
+      "Either export it or add it to .env.local in the script directory."
+    );
+    process.exit(1);
+  }
+
+  if (CONFIG_ERRORS.includes("SUPABASE_URL_INVALID")) {
+    console.error("ERROR: SUPABASE_URL is not a valid URL.");
+    process.exit(1);
+  }
+
+  if (CONFIG_ERRORS.includes("SUPABASE_SERVICE_ROLE_KEY")) {
+    console.error(
+      "ERROR: SUPABASE_SERVICE_ROLE_KEY not found.\n" +
+      "Either export it or add it to .env.local in the script directory."
+    );
+    process.exit(1);
+  }
 }
 
 const REST_BASE = `${SUPABASE_URL}/rest/v1`;
@@ -90,22 +193,51 @@ const HEADERS = {
   Prefer: "count=exact",
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function today() {
+export function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function humanSize(bytes) {
+export function humanSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+export function sha256File(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+export function writeManifest({ backupDir, dateStr, results, totalRows, totalSize }) {
+  const ok = results.every((result) => !result.error);
+  const manifest = {
+    schema_version: 1,
+    ok,
+    exported_at: new Date().toISOString(),
+    date: dateStr,
+    supabase_host: supabaseHost(SUPABASE_URL),
+    backup_dir: backupDir,
+    table_count: TABLES.length,
+    success_count: results.filter((result) => !result.error).length,
+    failure_count: results.filter((result) => result.error).length,
+    total_rows: totalRows,
+    total_size: totalSize,
+    tables: results.map((result) => ({
+      table: result.table,
+      ok: !result.error,
+      row_count: result.rowCount,
+      file_name: result.filePath ? path.basename(result.filePath) : null,
+      file_size: result.fileSize,
+      sha256: result.filePath ? sha256File(result.filePath) : null,
+      error: result.error || null,
+    })),
+  };
+  const manifestPath = path.join(backupDir, `manifest-${dateStr}.json`);
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
+  return { manifest, manifestPath };
+}
+
 /** Fetch a single page of rows from a table. */
-async function fetchPage(table, orderBy, offset, limit) {
+export async function fetchPage(table, orderBy, offset, limit) {
   const url = `${REST_BASE}/${table}?order=${orderBy}&limit=${limit}&offset=${offset}`;
   const rangeEnd = offset + limit - 1;
   const res = await fetch(url, {
@@ -132,7 +264,7 @@ async function fetchPage(table, orderBy, offset, limit) {
 }
 
 /** Export one table, streaming rows to disk. */
-async function exportTable(tableName, orderBy, backupDir, dateStr) {
+export async function exportTable(tableName, orderBy, backupDir, dateStr) {
   const filePath = path.join(backupDir, `${tableName}-${dateStr}.json`);
   let offset = 0;
   let total = null;
@@ -239,10 +371,20 @@ async function main() {
 
   console.log("-".repeat(38));
   console.log(`${"TOTAL".padEnd(20)}${String(totalRows).padStart(8)}${humanSize(totalSize).padStart(10)}`);
-  console.log(`\nDone. ${results.filter(r => !r.error).length}/${results.length} tables exported successfully.`);
+  const successCount = results.filter(r => !r.error).length;
+  const failureCount = results.length - successCount;
+  const { manifestPath } = writeManifest({ backupDir, dateStr, results, totalRows, totalSize });
+  console.log(`Manifest: ${manifestPath}`);
+  console.log(`\nDone. ${successCount}/${results.length} tables exported successfully.`);
+  if (failureCount > 0) {
+    console.error(`${failureCount} tables failed; backup is incomplete.`);
+    process.exitCode = 1;
+  }
 }
 
-main().catch((err) => {
-  console.error("Fatal error:", err);
-  process.exit(1);
-});
+if (isMain) {
+  main().catch((err) => {
+    console.error("Fatal error:", err);
+    process.exit(1);
+  });
+}

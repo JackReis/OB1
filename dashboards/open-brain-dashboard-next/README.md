@@ -31,7 +31,7 @@ Provides 9 pages for managing your thoughts:
 
 ## Prerequisites
 
-- A working Open Brain setup with the **REST API gateway** (`open-brain-rest`) deployed from [integrations/open-brain-rest](../../integrations/open-brain-rest/)
+- A working Open Brain REST API. On Aegis this can be the local replacement at `http://127.0.0.1:8787`; hosted installs can still use the `open-brain-rest` gateway from [integrations/open-brain-rest](../../integrations/open-brain-rest/).
 - **Node.js 18+** installed
 - A **Vercel account** (free tier works) or any Node.js hosting
 
@@ -39,8 +39,8 @@ Provides 9 pages for managing your thoughts:
 
 | Credential | Where to get it | Where it goes |
 |------------|----------------|---------------|
-| `NEXT_PUBLIC_API_URL` | Your Supabase project URL + `/functions/v1/open-brain-rest` | `.env` or hosting env vars |
-| `AGENT_MEMORY_API_URL` | Optional. Your Supabase project URL + `/functions/v1/agent-memory-api` | `.env` or hosting env vars |
+| `NEXT_PUBLIC_API_URL` | Aegis local: `http://127.0.0.1:8787`; hosted legacy: project URL + `/functions/v1/open-brain-rest` | `.env` or hosting env vars |
+| `AGENT_MEMORY_API_URL` | Optional. Aegis local: `http://127.0.0.1:8787`; hosted legacy: project URL + `/functions/v1/agent-memory-api` | `.env` or hosting env vars |
 | `AGENT_MEMORY_WORKSPACE_ID` | Optional. Default workspace for Agent Memory governance views | `.env` or hosting env vars |
 | `AGENT_MEMORY_PROJECT_ID` | Optional. Default project filter for Agent Memory governance views | `.env` or hosting env vars |
 | `SESSION_SECRET` | Generate: `openssl rand -hex 32` | `.env` or hosting env vars |
@@ -75,8 +75,12 @@ cp .env.example .env
 Edit `.env` and set your values:
 
 ```
-NEXT_PUBLIC_API_URL=https://YOUR-PROJECT-REF.supabase.co/functions/v1/open-brain-rest
-# Optional if your Agent Memory function follows the standard slug:
+# Aegis local replacement:
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8787
+AGENT_MEMORY_API_URL=http://127.0.0.1:8787
+
+# Hosted legacy form:
+# NEXT_PUBLIC_API_URL=https://YOUR-PROJECT-REF.supabase.co/functions/v1/open-brain-rest
 # AGENT_MEMORY_API_URL=https://YOUR-PROJECT-REF.supabase.co/functions/v1/agent-memory-api
 # AGENT_MEMORY_WORKSPACE_ID=ob1-staging
 SESSION_SECRET=your-32-char-secret-here
@@ -92,7 +96,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). You should see the login page.
 
-Enter your Open Brain API key (the `MCP_ACCESS_KEY` from your Supabase Edge Function secrets). After login, the dashboard loads with your stats and recent thoughts.
+Enter your Open Brain API key. On Aegis local this is the `BRAIN_ACCESS_KEY` from the local recipe `.env`; on hosted legacy installs it is the `MCP_ACCESS_KEY` from the Edge Function secrets. After login, the dashboard loads with your stats and recent thoughts.
 
 ### Step 5: Deploy to Vercel (optional)
 
@@ -211,6 +215,9 @@ Agent Memory pages also call these endpoints on `agent-memory-api`:
 
 > [!NOTE]
 > If your Open Brain instance doesn't have all these endpoints (e.g., no smart-ingest or duplicates), those pages will show errors but the core pages (dashboard, browse, search, detail) will still work.
+
+> [!TIP]
+> The Aegis local replacement at `http://127.0.0.1:8787` implements the core REST, MCP, and Agent Memory compatibility endpoints needed by this dashboard without hosted Supabase.
 
 <!-- -->
 
