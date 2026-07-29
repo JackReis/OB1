@@ -8,10 +8,25 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY")!;
+const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY") || "";
 const MCP_ACCESS_KEY = Deno.env.get("MCP_ACCESS_KEY")!;
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+const EMBEDDING_PROVIDER = (Deno.env.get("EMBEDDING_PROVIDER") || "openai-compatible").toLowerCase();
+const EMBEDDING_BASE_URL = (
+  Deno.env.get("EMBEDDING_BASE_URL") ||
+  (EMBEDDING_PROVIDER === "ollama" ? Deno.env.get("OLLAMA_URL") || "http://ollama:11434" : OPENROUTER_BASE)
+).replace(/\/$/, "");
+const EMBEDDING_MODEL =
+  Deno.env.get("EMBEDDING_MODEL") ||
+  Deno.env.get("EMBED_MODEL") ||
+  (EMBEDDING_PROVIDER === "ollama" ? "nomic-embed-text" : "openai/text-embedding-3-small");
+const EMBEDDING_API_KEY = Deno.env.get("EMBEDDING_API_KEY") || "";
+const EMBEDDING_DIM = parseEmbeddingDim(
+  Deno.env.get("EMBEDDING_DIM") ?? Deno.env.get("EMBED_DIM"),
+  knownEmbeddingDim(EMBEDDING_MODEL, EMBEDDING_PROVIDER)
+);
+const OLLAMA_EMBED_PATH = Deno.env.get("OLLAMA_EMBED_PATH") || "/api/embed";
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 type ThoughtMatch = {
@@ -43,56 +58,149 @@ function thoughtUrl(id: string): string {
   return `${CITATION_BASE_URL.replace(/\/$/, "")}/${id}`;
 }
 
+function knownEmbeddingDim(model: string, provider: string): number {
+  const normalized = model.replace(/:latest$/, "");
+  if (provider === "ollama") {
+    if (normalized === "nomic-embed-text") return 768;
+    if (normalized === "mxbai-embed-large") return 1024;
+  }
+  return 1536;
+}
+
+function parseEmbeddingDim(configured: string | undefined, fallback: number): number {
+  if (configured === undefined) return fallback;
+  const trimmed = configured.trim();
+  const parsed = Number(trimmed);
+  if (!trimmed || !Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid EMBEDDING_DIM/EMBED_DIM "${configured}": expected a positive integer.`);
+  }
+  return parsed;
+}
+
+function joinUrl(base: string, path: string): string {
+  return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+}
+
+function validateEmbedding(value: unknown, source: string): number[] {
+  if (!Array.isArray(value) || value.length === 0 || !value.every((item) => typeof item === "number")) {
+    throw new Error(`${source} did not return an embedding vector.`);
+  }
+  if (value.length !== EMBEDDING_DIM) {
+    throw new Error(
+      `embedding-dim mismatch: EMBEDDING_DIM=${EMBEDDING_DIM} but ${source} returned ${value.length}. ` +
+        "Use a model that matches the pgvector schema or migrate and re-embed before switching providers."
+    );
+  }
+  return value as number[];
+}
+
 async function getEmbedding(text: string): Promise<number[]> {
-  const r = await fetch(`${OPENROUTER_BASE}/embeddings`, {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error("embedding input is empty");
+  if (EMBEDDING_PROVIDER === "ollama") return getOllamaEmbedding(trimmed);
+  return getOpenAICompatibleEmbedding(trimmed);
+}
+
+function embeddingApiKeyForRequest(): string {
+  if (EMBEDDING_API_KEY) return EMBEDDING_API_KEY;
+  return EMBEDDING_BASE_URL === OPENROUTER_BASE ? OPENROUTER_API_KEY : "";
+}
+
+async function getOpenAICompatibleEmbedding(text: string): Promise<number[]> {
+  const requestApiKey = embeddingApiKeyForRequest();
+  if (!requestApiKey && EMBEDDING_BASE_URL === OPENROUTER_BASE) {
+    throw new Error("OPENROUTER_API_KEY or EMBEDDING_API_KEY is not configured");
+  }
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (requestApiKey) headers.Authorization = `Bearer ${requestApiKey}`;
+
+  const r = await fetch(joinUrl(EMBEDDING_BASE_URL, "/embeddings"), {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
-      model: "openai/text-embedding-3-small",
+      model: EMBEDDING_MODEL,
       input: text,
     }),
   });
   if (!r.ok) {
     const msg = await r.text().catch(() => "");
-    throw new Error(`OpenRouter embeddings failed: ${r.status} ${msg}`);
+    throw new Error(`Embedding request failed: ${r.status} ${msg}`);
   }
   const d = await r.json();
-  return d.data[0].embedding;
+  return validateEmbedding(d?.data?.[0]?.embedding, `Embedding provider ${EMBEDDING_MODEL}`);
+}
+
+async function getOllamaEmbedding(text: string): Promise<number[]> {
+  const path = OLLAMA_EMBED_PATH.startsWith("/") ? OLLAMA_EMBED_PATH : `/${OLLAMA_EMBED_PATH}`;
+  const legacyPromptEndpoint = path === "/api/embeddings";
+  const r = await fetch(joinUrl(EMBEDDING_BASE_URL, path), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(
+      legacyPromptEndpoint
+        ? { model: EMBEDDING_MODEL, prompt: text }
+        : { model: EMBEDDING_MODEL, input: text }
+    ),
+  });
+  if (!r.ok) {
+    const msg = await r.text().catch(() => "");
+    throw new Error(`Ollama embeddings failed: ${r.status} ${msg}`);
+  }
+  const d = await r.json();
+  const embedding = Array.isArray(d?.embeddings) ? d.embeddings[0] : d?.embedding;
+  return validateEmbedding(embedding, `Ollama ${EMBEDDING_MODEL}`);
+}
+
+function fallbackMetadata(text: string): Record<string, unknown> {
+  const lower = text.toLowerCase();
+  const type = /\b(todo|next step|ship|implement|fix|review|publish)\b/.test(lower)
+    ? "task"
+    : /\b(decided|decision|must|should)\b/.test(lower)
+      ? "decision"
+      : /\b(recipe|docs|reference|guide|url|http)\b/.test(lower)
+        ? "reference"
+        : "observation";
+  const topics = [
+    lower.includes("open brain") || lower.includes("ob1") ? "open brain" : null,
+    lower.includes("embedding") ? "embeddings" : null,
+    lower.includes("ollama") ? "ollama" : null,
+    lower.includes("dashboard") ? "dashboard" : null,
+  ].filter(Boolean);
+  return { type, topics: topics.length ? topics : ["uncategorized"], people: [], action_items: [], dates_mentioned: [] };
 }
 
 async function extractMetadata(text: string): Promise<Record<string, unknown>> {
-  const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `Extract metadata from the user's captured thought. Return JSON with:
+  if (!OPENROUTER_API_KEY) return fallbackMetadata(text);
+  try {
+    const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-4o-mini",
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: `Extract metadata from the user's captured thought. Return JSON with:
 - "people": array of people mentioned (empty if none)
 - "action_items": array of implied to-dos (empty if none)
 - "dates_mentioned": array of dates YYYY-MM-DD (empty if none)
 - "topics": array of 1-3 short topic tags (always at least one)
 - "type": one of "observation", "task", "idea", "reference", "person_note"
 Only extract what's explicitly there.`,
-        },
-        { role: "user", content: text },
-      ],
-    }),
-  });
-  const d = await r.json();
-  try {
+          },
+          { role: "user", content: text },
+        ],
+      }),
+    });
+    if (!r.ok) return fallbackMetadata(text);
+    const d = await r.json();
     return JSON.parse(d.choices[0].message.content);
   } catch {
-    return { topics: ["uncategorized"], type: "observation" };
+    return fallbackMetadata(text);
   }
 }
 

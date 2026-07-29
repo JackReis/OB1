@@ -17,6 +17,7 @@
  * Usage:
  *   node smoke-all.js                       # pretty-print dashboard (read-only)
  *   node smoke-all.js --json                # machine-readable JSON
+ *   node smoke-all.js --aegis-local         # smoke Aegis local replacement (read-only)
  *   node smoke-all.js --destructive         # also run Core Features (writes + LLM calls)
  *   node smoke-all.js --category=DB\ Schema # run only one category
  *   node smoke-all.js --help                # show this usage
@@ -34,6 +35,12 @@
  *   REST_API_BASE              e.g. https://<ref>.supabase.co/functions/v1/open-brain-rest
  *   NEXT_PUBLIC_API_URL        open-brain-rest base URL used by the dashboard
  *   SUPABASE_ANON_KEY          anon/publishable key; enables a real RLS probe
+ *
+ * Aegis local mode:
+ *   --aegis-local              uses AEGIS_LOCAL_BRAIN_URL or BRAIN_URL
+ *                              (default http://127.0.0.1:8787) and
+ *                              BRAIN_ACCESS_KEY from env or
+ *                              ../aegis-local-brain/.env.
  *
  * Exit codes:
  *   0  all pass, or all pass-or-skip
@@ -56,6 +63,7 @@ const __dirname = path.dirname(__filename);
 const args = process.argv.slice(2);
 const FLAG_JSON = args.includes("--json");
 const FLAG_HELP = args.includes("--help") || args.includes("-h");
+const FLAG_AEGIS_LOCAL = args.includes("--aegis-local");
 const FLAG_DESTRUCTIVE = args.includes("--destructive") || args.includes("--write");
 const categoryArg = args.find((a) => a.startsWith("--category="));
 const CATEGORY_FILTER = categoryArg ? categoryArg.slice("--category=".length) : null;
@@ -98,23 +106,34 @@ function parseEnvFile(envPath) {
   return vars;
 }
 
-function loadEnvFile() {
+function loadEnvFile({ includeCwdFallback = true } = {}) {
   // Primary: .env.local next to the script (survives `node path/to/smoke-all.js`
-  // from any cwd). Fallback: .env.local in cwd if the script-dir copy is absent.
+  // from any cwd). Hosted mode can also fall back to .env.local in cwd if the
+  // script-dir copy is absent; Aegis-local mode intentionally does not.
   const scriptDirEnv = path.join(__dirname, ".env.local");
   const cwdEnv = path.join(process.cwd(), ".env.local");
   const primary = parseEnvFile(scriptDirEnv);
   if (Object.keys(primary).length > 0) return primary;
+  if (!includeCwdFallback) return primary;
   if (scriptDirEnv !== cwdEnv) return parseEnvFile(cwdEnv);
   return primary;
 }
 
-const envFile = loadEnvFile();
+const envFile = FLAG_AEGIS_LOCAL ? {} : loadEnvFile({ includeCwdFallback: true });
 const env = (key) => process.env[key] || envFile[key] || "";
+const localEnvFile = parseEnvFile(path.join(__dirname, ".env.local"));
+const aegisLocalEnvFile = parseEnvFile(path.resolve(__dirname, "../aegis-local-brain/.env"));
+const localEnv = (key) => process.env[key] || localEnvFile[key] || aegisLocalEnvFile[key] || "";
 
 const SUPABASE_URL = env("SUPABASE_URL").replace(/\/+$/, "");
 const SERVICE_KEY = env("SUPABASE_SERVICE_ROLE_KEY");
 const MCP_KEY = env("MCP_ACCESS_KEY");
+const AEGIS_LOCAL_BASE = (
+  localEnv("AEGIS_LOCAL_BRAIN_URL") ||
+  localEnv("BRAIN_URL") ||
+  "http://127.0.0.1:8787"
+).replace(/\/+$/, "");
+const AEGIS_LOCAL_KEY = localEnv("BRAIN_ACCESS_KEY");
 const REST_API_BASE = env("REST_API_BASE").replace(/\/+$/, "");
 // NEXT_PUBLIC_API_URL is the open-brain-rest base URL (see
 // dashboards/open-brain-dashboard-next/README.md:41), not a dashboard /api.
@@ -123,7 +142,7 @@ const REST_API_BASE = env("REST_API_BASE").replace(/\/+$/, "");
 const REST_API_PUBLIC_URL = env("NEXT_PUBLIC_API_URL").replace(/\/+$/, "");
 const ANON_KEY = env("SUPABASE_ANON_KEY");
 
-if (!SUPABASE_URL || !SERVICE_KEY || !MCP_KEY) {
+if (!FLAG_AEGIS_LOCAL && (!SUPABASE_URL || !SERVICE_KEY || !MCP_KEY)) {
   const missing = [];
   if (!SUPABASE_URL) missing.push("SUPABASE_URL");
   if (!SERVICE_KEY) missing.push("SUPABASE_SERVICE_ROLE_KEY");
@@ -132,6 +151,15 @@ if (!SUPABASE_URL || !SERVICE_KEY || !MCP_KEY) {
     `ERROR: missing required env var(s): ${missing.join(", ")}\n` +
     `Set them in .env.local in the current directory or export them.\n` +
     `See the README for details.\n`
+  );
+  process.exit(2);
+}
+
+if (FLAG_AEGIS_LOCAL && !AEGIS_LOCAL_KEY) {
+  process.stderr.write(
+    `ERROR: missing required env var: BRAIN_ACCESS_KEY\n` +
+    `Set it in the environment, .env.local next to this script, or ` +
+    `OB1/recipes/aegis-local-brain/.env.\n`
   );
   process.exit(2);
 }
@@ -146,6 +174,9 @@ const SVC_HEADERS = {
   "Content-Type": "application/json",
 };
 const MCP_HEADERS = { "x-brain-key": MCP_KEY, "Content-Type": "application/json" };
+const AEGIS_LOCAL_MCP_URL = `${AEGIS_LOCAL_BASE}/functions/v1/open-brain-mcp`;
+const AEGIS_LOCAL_HEADERS = { "x-brain-key": AEGIS_LOCAL_KEY, "Content-Type": "application/json" };
+const AEGIS_LOCAL_INGEST_HEADERS = { "x-ingest-key": AEGIS_LOCAL_KEY, "Content-Type": "application/json" };
 
 // ---------------------------------------------------------------------------
 // Harness
@@ -219,6 +250,166 @@ function requireOptional(err, what) {
   }
   throw err;
 }
+
+// ---------------------------------------------------------------------------
+// Aegis local mode: read-only replacement smoke
+// ---------------------------------------------------------------------------
+
+const aegisLocalChecks = [
+  {
+    name: "GET /health reports local embedding model",
+    fn: async (s) => {
+      const body = await fetchJson(`${AEGIS_LOCAL_BASE}/health`, { headers: AEGIS_LOCAL_HEADERS }, s);
+      if (body?.ok !== true) throw new Error("health ok flag was not true");
+      if (body?.status && body.status !== "ok") throw new Error(`status=${body.status}`);
+      if (body?.embedding_dim !== 1024) throw new Error(`embedding_dim=${body?.embedding_dim}`);
+      return `${body.service ?? "aegis-local-brain"} ${body.embedding_model ?? "unknown"} dim=${body.embedding_dim}`;
+    },
+  },
+  {
+    name: "GET /count returns local thought count",
+    fn: async (s) => {
+      const body = await fetchJson(`${AEGIS_LOCAL_BASE}/count`, { headers: AEGIS_LOCAL_HEADERS }, s);
+      const n = body?.count ?? body?.total;
+      if (typeof n !== "number") throw new Error("count response missing numeric count/total");
+      return `count=${n}`;
+    },
+  },
+  {
+    name: "GET imported backup count is available",
+    fn: async (s) => {
+      const body = await fetchJson(
+        `${AEGIS_LOCAL_BASE}/count?migrated_from=open-brain-supabase-backup`,
+        { headers: AEGIS_LOCAL_HEADERS },
+        s,
+      );
+      if (typeof body?.imported_count !== "number") throw new Error("missing imported_count");
+      return `imported_count=${body.imported_count}`;
+    },
+  },
+  {
+    name: "open-brain-rest count alias works",
+    fn: async (s) => {
+      const body = await fetchJson(
+        `${AEGIS_LOCAL_BASE}/functions/v1/open-brain-rest/count`,
+        { headers: AEGIS_LOCAL_HEADERS },
+        s,
+      );
+      const n = body?.count ?? body?.total;
+      if (typeof n !== "number") throw new Error("alias count response missing numeric count/total");
+      return `count=${n}`;
+    },
+  },
+  {
+    name: "agent-memory-api health alias works",
+    fn: async (s) => {
+      const body = await fetchJson(
+        `${AEGIS_LOCAL_BASE}/functions/v1/agent-memory-api/health`,
+        { headers: AEGIS_LOCAL_HEADERS },
+        s,
+      );
+      if (body?.ok !== true && body?.status !== "ok") throw new Error("agent memory health was not ok");
+      return body?.service ?? "agent-memory-api";
+    },
+  },
+  {
+    name: "MCP tools/list returns core tools",
+    fn: async (s) => {
+      const body = await fetchJson(AEGIS_LOCAL_MCP_URL, {
+        method: "POST",
+        headers: AEGIS_LOCAL_HEADERS,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      }, s);
+      const names = (body?.result?.tools ?? []).map((tool) => tool.name);
+      const required = ["search_thoughts", "list_thoughts", "thought_stats", "capture_thought"];
+      const missing = required.filter((name) => !names.includes(name));
+      if (missing.length) throw new Error(`missing core tools: ${missing.join(", ")}`);
+      return `tools=${names.length}`;
+    },
+  },
+  {
+    name: "MCP thought_stats tool call works",
+    fn: async (s) => {
+      const body = await fetchJson(AEGIS_LOCAL_MCP_URL, {
+        method: "POST",
+        headers: AEGIS_LOCAL_HEADERS,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: "thought_stats", arguments: {} },
+        }),
+      }, s);
+      if (body?.error) throw new Error(`MCP error: ${body.error.message ?? JSON.stringify(body.error)}`);
+      if (!body?.result) throw new Error("no result in MCP response");
+      return "stats returned";
+    },
+  },
+  {
+    name: "POST /search text mode returns result shape",
+    fn: async (s) => {
+      const body = await fetchJson(`${AEGIS_LOCAL_BASE}/search`, {
+        method: "POST",
+        headers: AEGIS_LOCAL_HEADERS,
+        body: JSON.stringify({ query: "smoke", mode: "text", limit: 3 }),
+      }, s);
+      const hits = body?.results ?? body?.data ?? [];
+      if (!Array.isArray(hits)) throw new Error("search response missing results array");
+      return `hits=${hits.length}`;
+    },
+  },
+  {
+    name: "MCP rejects missing access key",
+    fn: async (s) => {
+      const res = await fetch(AEGIS_LOCAL_MCP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }),
+        signal: s,
+      });
+      if (res.status === 401 || res.status === 403) return `HTTP ${res.status} (rejected)`;
+      throw new Error(`expected 401/403, got ${res.status}`);
+    },
+  },
+  {
+    name: "MCP rejects wrong access key",
+    fn: async (s) => {
+      const res = await fetch(AEGIS_LOCAL_MCP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-brain-key": "wrong-key-for-aegis-local-smoke" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list" }),
+        signal: s,
+      });
+      if (res.status === 401 || res.status === 403) return `HTTP ${res.status} (rejected)`;
+      throw new Error(`expected 401/403, got ${res.status}`);
+    },
+  },
+  {
+    name: "x-ingest-key alias authorizes REST count",
+    fn: async (s) => {
+      const body = await fetchJson(
+        `${AEGIS_LOCAL_BASE}/functions/v1/open-brain-rest/count`,
+        { headers: AEGIS_LOCAL_INGEST_HEADERS },
+        s,
+      );
+      const n = body?.count ?? body?.total;
+      if (typeof n !== "number") throw new Error("x-ingest-key count response missing numeric count/total");
+      return `count=${n}`;
+    },
+  },
+  {
+    name: "backup archive count route is available",
+    fn: async (s) => {
+      const body = await fetchJson(
+        `${AEGIS_LOCAL_BASE}/backup/archive/count?table=entities`,
+        { headers: AEGIS_LOCAL_HEADERS },
+        s,
+      );
+      if (typeof body?.count !== "number") throw new Error("archive count response missing numeric count");
+      return `entities=${body.count}`;
+    },
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Category 1: MCP Server (canonical core)
@@ -851,16 +1042,21 @@ const categories = [
   { name: "Row-Level Security", checks: rlsChecks },
 ];
 
+const aegisLocalCategories = [
+  { name: "Aegis Local", checks: aegisLocalChecks },
+];
+
 function categoryFilter(name) {
   if (!CATEGORY_FILTER) return true;
   return name.toLowerCase() === CATEGORY_FILTER.toLowerCase();
 }
 
 async function main() {
-  const selected = categories.filter((c) => categoryFilter(c.name));
+  const activeCategories = FLAG_AEGIS_LOCAL ? aegisLocalCategories : categories;
+  const selected = activeCategories.filter((c) => categoryFilter(c.name));
   if (selected.length === 0) {
     process.stderr.write(`ERROR: no category matches --category=${CATEGORY_FILTER}\n`);
-    process.stderr.write(`Available: ${categories.map((c) => c.name).join(", ")}\n`);
+    process.stderr.write(`Available: ${activeCategories.map((c) => c.name).join(", ")}\n`);
     process.exit(2);
   }
 
@@ -1015,6 +1211,8 @@ async function main() {
   if (FLAG_JSON) {
     process.stdout.write(JSON.stringify({
       ok: allPass,
+      mode: FLAG_AEGIS_LOCAL ? "aegis-local" : "hosted-supabase",
+      target: FLAG_AEGIS_LOCAL ? AEGIS_LOCAL_BASE : SUPABASE_URL,
       totals,
       total: results.length,
       results,
@@ -1022,7 +1220,8 @@ async function main() {
   } else {
     process.stdout.write(
       `Open Brain Smoke Test -- ${results.length} checks across ${selected.length} categories\n` +
-      `Target: ${SUPABASE_URL}\n\n`
+      `Mode: ${FLAG_AEGIS_LOCAL ? "aegis-local" : "hosted-supabase"}\n` +
+      `Target: ${FLAG_AEGIS_LOCAL ? AEGIS_LOCAL_BASE : SUPABASE_URL}\n\n`
     );
     for (const category of selected) {
       const rows = results.filter((r) => r.category === category.name);

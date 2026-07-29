@@ -1,5 +1,5 @@
 export interface Thought {
-  id: number;
+  id: string | number;
   uuid?: string;
   content: string;
   type: string;
@@ -40,8 +40,8 @@ export interface StatsResponse {
 }
 
 export interface DuplicatePair {
-  thought_id_a: number;
-  thought_id_b: number;
+  thought_id_a: string | number;
+  thought_id_b: string | number;
   similarity: number;
   content_a: string;
   content_b: string;

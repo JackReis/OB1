@@ -12,6 +12,18 @@ const MIN_DUPLICATE_THRESHOLD = 0.8;
 const VERIFY_PAGE_SIZE = 500;
 const VERIFY_MAX_SCAN = 5000;
 
+type DuplicateThoughtId = string | number;
+
+function normalizeDuplicateThoughtId(value: unknown): DuplicateThoughtId | null {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return null;
+}
+
 export async function POST(request: NextRequest) {
   let apiKey: string;
   try {
@@ -29,22 +41,17 @@ export async function POST(request: NextRequest) {
       thought_id_b: unknown;
     };
 
-    // BL-03: Validate IDs are positive integers, not truthy-but-wrong values
-    if (
-      !Number.isInteger(thought_id_a) ||
-      (thought_id_a as number) <= 0 ||
-      !Number.isInteger(thought_id_b) ||
-      (thought_id_b as number) <= 0
-    ) {
+    // BL-03: Validate IDs, while allowing Aegis-local UUIDs and hosted numeric IDs.
+    const idA = normalizeDuplicateThoughtId(thought_id_a);
+    const idB = normalizeDuplicateThoughtId(thought_id_b);
+    if (idA === null || idB === null) {
       return NextResponse.json(
-        { error: "Both thought_id_a and thought_id_b must be positive integers" },
+        { error: "Both thought_id_a and thought_id_b are required" },
         { status: 400 }
       );
     }
-    const idA = thought_id_a as number;
-    const idB = thought_id_b as number;
 
-    if (idA === idB) {
+    if (String(idA) === String(idB)) {
       return NextResponse.json(
         { error: "thought_id_a and thought_id_b must differ" },
         { status: 400 }
@@ -77,8 +84,8 @@ export async function POST(request: NextRequest) {
       if (
         dups.pairs.some(
           (p) =>
-            (p.thought_id_a === idA && p.thought_id_b === idB) ||
-            (p.thought_id_a === idB && p.thought_id_b === idA)
+            (String(p.thought_id_a) === String(idA) && String(p.thought_id_b) === String(idB)) ||
+            (String(p.thought_id_a) === String(idB) && String(p.thought_id_b) === String(idA))
         )
       ) {
         pairMatches = true;

@@ -24,7 +24,7 @@ Screenshots go in `docs/screenshots/` and should be referenced from this README 
 ## Prerequisites
 
 - A working Open Brain setup ([guide](../../docs/01-getting-started.md))
-- The **REST API gateway** (`open-brain-rest` Edge Function from PR #201) deployed and reachable
+- A reachable Open Brain REST API. On Aegis this can be the local replacement at `http://127.0.0.1:8787`; hosted legacy installs can still use the `open-brain-rest` Edge Function from PR #201.
 - **Node.js 20+**
 - A host for the dashboard: Vercel or Netlify free tier works; self-hosting on a Node.js 20+ runtime is also fine
 
@@ -34,7 +34,7 @@ All configuration is through environment variables. **The app refuses to start i
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `NEXT_PUBLIC_API_URL` | Yes | Base URL of your Open Brain REST API, typically `https://YOUR-PROJECT-REF.supabase.co/functions/v1/open-brain-rest`. |
+| `NEXT_PUBLIC_API_URL` | Yes | Base URL of your Open Brain REST API. Aegis local: `http://127.0.0.1:8787`; hosted legacy: `https://YOUR-PROJECT-REF.supabase.co/functions/v1/open-brain-rest`. |
 | `SESSION_SECRET` | Yes | 32+ character secret used by `iron-session` to encrypt the session cookie. Generate with `openssl rand -hex 32`. |
 | `RESTRICTED_PASSPHRASE_HASH` | No | SHA-256 hash of a passphrase that unlocks restricted/sensitive content. Only meaningful if your brain has a `sensitivity_tier` column on `public.thoughts`. There is no official sensitivity-tiers primitive upstream yet — either add your own migration (see PR #192 for pattern) or wait for the primitive to land. On stock OB1, this dashboard's restricted-content toggle is hidden at startup. Generate with `echo -n "your-passphrase" \| shasum -a 256`. |
 
@@ -56,6 +56,14 @@ npm start
 ```
 
 For Vercel or Netlify, connect this folder and set the same environment variables in the hosting provider's dashboard.
+
+For Aegis-local testing, set:
+
+```bash
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8787
+```
+
+Use the local `BRAIN_ACCESS_KEY` from `~/Projects/Sea Ranch AI/OB1/recipes/aegis-local-brain/.env` when logging in.
 
 ## Authentication
 
@@ -139,6 +147,6 @@ The app listens on port 3000 by default; use `PORT=4000 npm start` to override.
 1. **"SESSION_SECRET env var is required and must be at least 32 characters"** — generate one with `openssl rand -hex 32` and set it. This is intentional; the app refuses to start without it.
 2. **Login says "Could not reach API"** — verify `NEXT_PUBLIC_API_URL` is correct and the REST gateway is live. Test with `curl -H "x-brain-key: YOUR_KEY" $NEXT_PUBLIC_API_URL/health`.
 3. **Login says "Invalid API key or service unavailable"** — the REST gateway reached but rejected the key. Check `MCP_ACCESS_KEY` (or whatever secret backs `x-brain-key`) in your Edge Function secrets.
-4. **Search returns nothing** — semantic search needs embeddings. Verify `OPENROUTER_API_KEY` (or your embedding provider) is set in Supabase secrets and that the `embedding` column is populated.
-5. **Ingest page never finishes extracting** — confirm the `smart-ingest` Edge Function is deployed alongside the REST gateway.
+4. **Search returns nothing** — semantic search needs embeddings. On Aegis local, verify Ollama is serving the configured embedding model and `/health` reports the expected `embedding_dim`. On hosted legacy installs, verify the embedding provider secret is configured and the `embedding` column is populated.
+5. **Ingest page never finishes extracting** — on Aegis local, `/ingest` is a compatibility endpoint with dry-run/default single-capture behavior. On hosted legacy installs, confirm the `smart-ingest` Edge Function is deployed alongside the REST gateway.
 6. **Connections panel empty on Detail page** — the panel requires `topics` or `people` in `metadata`. Thoughts enriched through classification have these; raw captures do not.

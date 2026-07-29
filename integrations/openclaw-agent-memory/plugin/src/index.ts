@@ -1,8 +1,86 @@
+import { readFile } from "node:fs/promises";
 import { Type } from "typebox";
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { resolveConfiguredSecretInputString } from "openclaw/plugin-sdk/secret-input-runtime";
 import { AgentMemoryClient, type AgentMemoryConfig } from "./client.js";
-import { recallParameters, writebackParameters } from "./tool-schemas.js";
+
+type SecretRef = {
+  source: "env" | "file" | "exec";
+  provider: string;
+  id: string;
+};
+
+function isSecretRef(value: unknown): value is SecretRef {
+  const ref = value as Partial<SecretRef>;
+  return !!ref
+    && typeof ref === "object"
+    && (ref.source === "env" || ref.source === "file" || ref.source === "exec")
+    && typeof ref.provider === "string"
+    && ref.provider.length > 0
+    && typeof ref.id === "string"
+    && ref.id.length > 0;
+}
+
+function jsonPointerGet(value: unknown, pointer: string): unknown {
+  if (pointer === "") return value;
+  if (!pointer.startsWith("/")) return undefined;
+  return pointer
+    .slice(1)
+    .split("/")
+    .map((part) => part.replace(/~1/g, "/").replace(/~0/g, "~"))
+    .reduce<unknown>((current, part) => {
+      if (!current || typeof current !== "object") return undefined;
+      return (current as Record<string, unknown>)[part];
+    }, value);
+}
+
+async function resolveFileSecret(ref: SecretRef, provider: Record<string, unknown>): Promise<string> {
+  if (provider.source !== "file") {
+    throw new Error(`secret provider "${ref.provider}" is not a file provider`);
+  }
+  if (typeof provider.path !== "string" || provider.path.length === 0) {
+    throw new Error(`secret provider "${ref.provider}" is missing path`);
+  }
+
+  const text = await readFile(provider.path, "utf8");
+  if (provider.mode === "singleValue") {
+    if (ref.id !== "value") {
+      throw new Error(`singleValue secret provider "${ref.provider}" expects id "value"`);
+    }
+    return text.trim();
+  }
+
+  const parsed = JSON.parse(text);
+  const value = jsonPointerGet(parsed, ref.id);
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`file secret provider "${ref.provider}" could not resolve ${ref.id}`);
+  }
+  return value;
+}
+
+async function resolveAccessKey(config: unknown, value: unknown): Promise<string> {
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+  if (!isSecretRef(value)) {
+    throw new Error("OB1 Agent Memory plugin requires config.accessKey.");
+  }
+  if (value.source === "env") {
+    const envValue = process.env[value.id];
+    if (!envValue) {
+      throw new Error(`env secret ${value.id} is not set`);
+    }
+    return envValue;
+  }
+  if (value.source === "exec") {
+    throw new Error("exec secret refs are not supported by this compatibility resolver");
+  }
+
+  const providers = ((config as any)?.secrets?.providers || {}) as Record<string, Record<string, unknown>>;
+  const provider = providers[value.provider];
+  if (!provider) {
+    throw new Error(`secret provider "${value.provider}" is not configured`);
+  }
+  return resolveFileSecret(value, provider);
+}
 
 async function clientFromApi(api: { pluginConfig?: unknown; config?: unknown }) {
   const raw = (api.pluginConfig || {}) as Record<string, unknown>;
@@ -13,22 +91,11 @@ async function clientFromApi(api: { pluginConfig?: unknown; config?: unknown }) 
     throw new Error("OB1 Agent Memory plugin requires config.workspaceId");
   }
 
-  const accessKey = await resolveConfiguredSecretInputString({
-    config: (api.config || {}) as any,
-    env: {},
-    value: raw.accessKey,
-    path: "plugins.entries.nbj-ob1-agent-memory.config.accessKey",
-    unresolvedReasonStyle: "detailed",
-  });
-
-  if (!accessKey.value) {
-    const reason = accessKey.unresolvedRefReason ? ` ${accessKey.unresolvedRefReason}` : "";
-    throw new Error(`OB1 Agent Memory plugin requires config.accessKey.${reason}`);
-  }
+  const accessKey = await resolveAccessKey(api.config, raw.accessKey);
 
   const config: AgentMemoryConfig = {
     endpoint: raw.endpoint,
-    accessKey: accessKey.value,
+    accessKey,
     workspaceId: raw.workspaceId,
     projectId: typeof raw.projectId === "string" ? raw.projectId : undefined,
     requireReviewByDefault: typeof raw.requireReviewByDefault === "boolean" ? raw.requireReviewByDefault : true,
@@ -49,7 +116,7 @@ function toolResult(value: unknown) {
   };
 }
 
-const nullableString = Type.Union([Type.String(), Type.Literal(null)]);
+const nullableString = Type.Union([Type.String(), Type.Null()]);
 const optionalNullableString = Type.Optional(nullableString);
 const stringArrayRecord = Type.Record(Type.String(), Type.Array(Type.String()));
 
@@ -93,7 +160,7 @@ const recallParameters = Type.Object({
   limits: Type.Optional(Type.Object({
     max_items: Type.Optional(Type.Number({ minimum: 1, maximum: 50 })),
     max_tokens: Type.Optional(Type.Number({ minimum: 256, maximum: 20000 })),
-    recency_days: Type.Optional(Type.Union([Type.Number({ minimum: 1 }), Type.Literal(null)])),
+    recency_days: Type.Optional(Type.Union([Type.Number({ minimum: 1 }), Type.Null()])),
   })),
   sensitivity: Type.Optional(Type.Record(Type.String(), Type.Boolean())),
 });
@@ -152,8 +219,8 @@ const writebackParameters = Type.Object({
     requires_review: Type.Optional(Type.Boolean()),
   })),
   retention: Type.Optional(Type.Object({
-    ttl_days: Type.Optional(Type.Union([Type.Number({ minimum: 1 }), Type.Literal(null)])),
-    stale_after_days: Type.Optional(Type.Union([Type.Number({ minimum: 1 }), Type.Literal(null)])),
+    ttl_days: Type.Optional(Type.Union([Type.Number({ minimum: 1 }), Type.Null()])),
+    stale_after_days: Type.Optional(Type.Union([Type.Number({ minimum: 1 }), Type.Null()])),
   })),
   visibility: Type.Optional(Type.Object({
     workspace: optionalNullableString,
@@ -175,12 +242,12 @@ function registerTool(api: any, tool: { name: string; label: string; description
   });
 }
 
-export default definePluginEntry({
+const plugin = {
   id: "nbj-ob1-agent-memory",
   name: "NBJ OB1 Agent Memory for OpenClaw",
   description: "Recall and write governed Nate Jones OB1 memory from OpenClaw workflows.",
   kind: "memory",
-  register(api) {
+  register(api: any) {
     registerTool(api, {
       name: "openbrain_recall",
       label: "NBJ OB1 recall",
@@ -416,4 +483,6 @@ export default definePluginEntry({
       });
     }
   },
-});
+};
+
+export default plugin;

@@ -41,12 +41,12 @@ DESCRIBE THE EXACT WORK.
 - If `git worktree add` says a branch is already checked out, create a new branch name or remove the old clean worktree.
 - If cleanup fails, inspect `git status --short` and preserve uncommitted work.
 
-## Required Step: Update Linear
+## Required Step: Update Beads And Vault State
 
-- For feature work tied to a Linear issue, update Linear at the start of the work, at meaningful checkpoints, and before handing back to the user.
-- Use the parent issue as the living implementation log and keep child issues aligned with the files and behavior being changed.
-- For the OB1 Agent Memory / OpenClaw launch work, the parent issue is `NAT-833`. Record architecture notes, implementation milestones, blockers, and verification results there.
-- Do not wait until the end to document decisions. If a decision changes schema, API contract, trust policy, user-facing workflow, or publishing path, capture it in Linear while it is still fresh.
+- Beads is the issue-tracking SSOT. For feature work tied to a bead, update the bead at the start of the work, at meaningful checkpoints, and before handing back to the user.
+- The vault is the coordination and project account. Record durable decisions, handoffs, and project context there when the work changes schema, API contract, trust policy, user-facing workflow, or publishing path.
+- Linear was decommissioned on 2026-06-24. `NAT-833` is historical context only; do not create or update Linear work unless Jack explicitly re-enables it.
+- Current fleet freshness marker: `jack-blue-cardinal`. Hermes Telegram is the sovereign operator surface for commands and approvals.
 
 ## Agent Memory Product Guardrails
 
