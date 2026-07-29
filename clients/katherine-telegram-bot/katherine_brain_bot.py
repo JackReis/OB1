@@ -42,7 +42,7 @@ BRAIN_HOST = os.environ.get("KB_HOST", "127.0.0.1")
 BRAIN_PORT = int(os.environ.get("KB_PORT", "8788"))
 BRAIN_ENV_PATH = os.environ.get(
     "KB_ENV",
-    "/Users/hermes/Projects/Sea Ranch AI/OB1/recipes/katherine-local-brain/.env",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "recipes", "katherine-local-brain", ".env"),
 )
 MCP_PATH = "/functions/v1/open-brain-mcp"
 CAPTURE_TASK_ID = os.environ.get("KB_TASK_ID", "katherine/telegram")

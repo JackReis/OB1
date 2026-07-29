@@ -24,7 +24,7 @@ Export the current hosted Open Brain backup contract to local JSON files. The sc
    ```bash
    node backup-brain.mjs --preflight --json
    node backup-brain.mjs
-   node /Users/hermes/Projects/Sea\ Ranch\ AI/OB1/recipes/brain-backup/backup-brain.mjs
+   node ~/Projects/Sea\ Ranch\ AI/OB1/recipes/brain-backup/backup-brain.mjs
    ```
 
 3. The preflight command checks local env availability, URL shape, script-directory writeability, backup directory target, and table list. It does not make a hosted Supabase request and never prints the service-role key. The current export set is `thoughts`, `agent_memories`, and `agent_memory_audit_events`.

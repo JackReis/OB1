@@ -16,7 +16,7 @@ This is the Katherine lane's local brain instance. It is intentionally separate 
 ## Setup
 
 ```sh
-cd /Users/jack.reis/Projects/Sea\ Ranch\ AI/OB1/recipes/katherine-local-brain
+cd ~/Projects/Sea\ Ranch\ AI/OB1/recipes/katherine-local-brain
 ./setup.sh
 docker compose up -d
 curl -fsS http://127.0.0.1:8788/health

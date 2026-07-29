@@ -4,9 +4,17 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import os from "node:os";
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPE_DIR = path.resolve(SCRIPT_DIR, "..");
 const OB1_ROOT = path.resolve(RECIPE_DIR, "../..");
+
+function expandHome(p) {
+  if (typeof p !== "string") return p;
+  if (p.startsWith("~/") || p === "~") return path.join(os.homedir(), p.slice(1));
+  return p;
+}
 
 const args = process.argv.slice(2);
 const FLAG_JSON = args.includes("--json");
@@ -16,15 +24,15 @@ const BRAIN_BACKUP_SCRIPT = path.resolve(process.env.BRAIN_BACKUP_SCRIPT || path
 const BACKUP_DIR = process.env.BRAIN_BACKUP_DIR || path.join(OB1_ROOT, "recipes/brain-backup/backup");
 const DASHBOARD_NEXT_ENV = process.env.DASHBOARD_NEXT_ENV || path.join(OB1_ROOT, "dashboards/open-brain-dashboard-next/.env.local");
 const DASHBOARD_PRO_ENV = process.env.DASHBOARD_PRO_ENV || path.join(OB1_ROOT, "dashboards/open-brain-dashboard-pro/.env.local");
-const HERMES_BRIDGE = process.env.HERMES_OPENBRAIN_BRIDGE || "/Users/hermes/.hermes/bin/openbrain-mcp-bridge.py";
-const HERMES_WRAPPER = process.env.HERMES_OPENBRAIN_WRAPPER || "/Users/hermes/.hermes/bin/openbrain-mcp-wrapper.sh";
-const CODEX_RULES_FILE = process.env.CODEX_RULES_FILE || "/Users/hermes/.codex/rules/default.rules";
-const CLAUDE_BIN = process.env.CLAUDE_BIN || "/Users/hermes/.hermes/node/bin/claude";
-const CLAUDE_SETTINGS_FILE = process.env.CLAUDE_SETTINGS_FILE || "/Users/hermes/.claude/settings.json";
-const CLAUDE_OB1_HOOK = process.env.CLAUDE_OB1_HOOK || "/Users/hermes/.claude/hooks/openbrain-turn-sync.py";
-const KIMI_BIN = process.env.KIMI_BIN || "/Users/hermes/.kimi-code/bin/kimi";
-const KIMI_AEGIS_BIN = process.env.KIMI_AEGIS_BIN || "/Users/hermes/.kimi-code/bin/kimi-aegis-ollama";
-const ANTIGRAVITY_BIN = process.env.ANTIGRAVITY_BIN || "/Users/hermes/homebrew/bin/agy";
+const HERMES_BRIDGE = process.env.HERMES_OPENBRAIN_BRIDGE || "~/.hermes/bin/openbrain-mcp-bridge.py";
+const HERMES_WRAPPER = process.env.HERMES_OPENBRAIN_WRAPPER || "~/.hermes/bin/openbrain-mcp-wrapper.sh";
+const CODEX_RULES_FILE = process.env.CODEX_RULES_FILE || "~/.codex/rules/default.rules";
+const CLAUDE_BIN = process.env.CLAUDE_BIN || "~/.hermes/node/bin/claude";
+const CLAUDE_SETTINGS_FILE = process.env.CLAUDE_SETTINGS_FILE || "~/.claude/settings.json";
+const CLAUDE_OB1_HOOK = process.env.CLAUDE_OB1_HOOK || "~/.claude/hooks/openbrain-turn-sync.py";
+const KIMI_BIN = process.env.KIMI_BIN || "~/.kimi-code/bin/kimi";
+const KIMI_AEGIS_BIN = process.env.KIMI_AEGIS_BIN || "~/.kimi-code/bin/kimi-aegis-ollama";
+const ANTIGRAVITY_BIN = process.env.ANTIGRAVITY_BIN || "~/homebrew/bin/agy";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/Applications/Kimi.app/Contents/Resources/resources/gateway/node_modules/.bin/openclaw";
 const OPENCLAW_PROFILE = process.env.OPENCLAW_PROFILE || "ob1-agent-memory";
 const OPENCLAW_PLUGIN_ID = process.env.OPENCLAW_PLUGIN_ID || "nbj-ob1-agent-memory";
@@ -40,34 +48,34 @@ const OPENBRAIN_PLUGIN_TOOLS = [
   "openbrain_get_recall_trace",
 ];
 const DEFAULT_AGENT_SPAWN_PATHS = [
-  "/Users/hermes/.hermes/.env",
-  "/Users/hermes/.hermes/config.yaml",
-  "/Users/hermes/.hermes/plugins/ob1/__init__.py",
-  "/Users/hermes/.hermes/plugins/ob1/plugin.yaml",
-  "/Users/hermes/.hermes/profiles/aegis/.env",
-  "/Users/hermes/.hermes/profiles/aegis/config.yaml",
-  "/Users/hermes/.hermes/profiles/aegis/plugins/ob1/__init__.py",
-  "/Users/hermes/.hermes/profiles/aegis/plugins/ob1/plugin.yaml",
-  "/Users/hermes/.hermes/bin/openbrain-mcp-wrapper.sh",
-  "/Users/hermes/.hermes/bin/openbrain-mcp-bridge.py",
-  "/Users/hermes/.hermes/fleet/aegis-alignment.sh",
-  "/Users/hermes/Library/LaunchAgents/ai.hermes.gateway.plist",
-  "/Users/hermes/Library/LaunchAgents/ai.hermes.gateway-aegis.plist",
-  "/Users/hermes/Library/LaunchAgents/ai.fleet.alignment-aegis.plist",
-  "/Users/hermes/Library/LaunchAgents/com.echospringsdev.paperclip-bridge.plist",
-  "/Users/hermes/.paperclip/instances/default/.env",
-  "/Users/hermes/.paperclip/instances/default/config.json",
-  "/Users/hermes/.codex/rules/default.rules",
-  "/Users/hermes/.codex/superpowers/skills/ob1-lifecycle/SKILL.md",
-  "/Users/hermes/.hermes/skills/note-taking/ob1-lifecycle/SKILL.md",
-  "/Users/hermes/.hermes/skills/note-taking/ob1-lifecycle/references/ob1-mcp-api.md",
-  "/Users/hermes/.hermes/skills/note-taking/ob1-personalization-checklist/SKILL.md",
-  "/Users/hermes/.hermes/skills/devops/repair-openbrain-mcp/SKILL.md",
+  "~/.hermes/.env",
+  "~/.hermes/config.yaml",
+  "~/.hermes/plugins/ob1/__init__.py",
+  "~/.hermes/plugins/ob1/plugin.yaml",
+  "~/.hermes/profiles/aegis/.env",
+  "~/.hermes/profiles/aegis/config.yaml",
+  "~/.hermes/profiles/aegis/plugins/ob1/__init__.py",
+  "~/.hermes/profiles/aegis/plugins/ob1/plugin.yaml",
+  "~/.hermes/bin/openbrain-mcp-wrapper.sh",
+  "~/.hermes/bin/openbrain-mcp-bridge.py",
+  "~/.hermes/fleet/aegis-alignment.sh",
+  "~/Library/LaunchAgents/ai.hermes.gateway.plist",
+  "~/Library/LaunchAgents/ai.hermes.gateway-aegis.plist",
+  "~/Library/LaunchAgents/ai.fleet.alignment-aegis.plist",
+  "~/Library/LaunchAgents/com.echospringsdev.paperclip-bridge.plist",
+  "~/.paperclip/instances/default/.env",
+  "~/.paperclip/instances/default/config.json",
+  "~/.codex/rules/default.rules",
+  "~/.codex/superpowers/skills/ob1-lifecycle/SKILL.md",
+  "~/.hermes/skills/note-taking/ob1-lifecycle/SKILL.md",
+  "~/.hermes/skills/note-taking/ob1-lifecycle/references/ob1-mcp-api.md",
+  "~/.hermes/skills/note-taking/ob1-personalization-checklist/SKILL.md",
+  "~/.hermes/skills/devops/repair-openbrain-mcp/SKILL.md",
 ];
 
 function readIfExists(filePath) {
   try {
-    return fs.readFileSync(filePath, "utf8");
+    return fs.readFileSync(expandHome(filePath), "utf8");
   } catch (err) {
     if (err?.code === "ENOENT") return null;
     throw err;
@@ -90,7 +98,7 @@ function parseEnvFile(filePath) {
 
 function fileMode(filePath) {
   try {
-    return `0${(fs.statSync(filePath).mode & 0o777).toString(8)}`;
+    return `0${(fs.statSync(expandHome(filePath)).mode & 0o777).toString(8)}`;
   } catch {
     return null;
   }
@@ -115,10 +123,11 @@ function configuredAgentSpawnPaths() {
 }
 
 function runCommand(command, args, options = {}) {
-  if (!fs.existsSync(command)) {
+  const resolved = expandHome(command);
+  if (!fs.existsSync(resolved)) {
     return { ok: false, status: null, stdout: "", stderr: "", missing: true };
   }
-  const result = spawnSync(command, args, {
+  const result = spawnSync(resolved, args, {
     cwd: options.cwd || RECIPE_DIR,
     encoding: "utf8",
     timeout: options.timeout || 5000,

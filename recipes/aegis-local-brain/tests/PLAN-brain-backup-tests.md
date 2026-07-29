@@ -14,7 +14,7 @@
 
 - Node.js 22 installed (`node --version` shows v22.x)
 - Source files exist at the paths listed below
-- Write access to `/Users/hermes/Projects/Sea Ranch AI/OB1/recipes/aegis-local-brain/tests/`
+- Write access to `~/Projects/Sea Ranch AI/OB1/recipes/aegis-local-brain/tests/`
 
 ### Source Files
 

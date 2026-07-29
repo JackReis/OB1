@@ -16,7 +16,7 @@ This is the replacement lane for the over-quota hosted Open Brain database. It i
 ## Setup On Aegis
 
 ```sh
-cd /Users/hermes/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain
+cd ~/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain
 ./setup.sh
 docker compose up -d
 curl -fsS http://127.0.0.1:8787/health
@@ -53,7 +53,7 @@ Use the local `BRAIN_ACCESS_KEY` from `.env` as the `x-brain-key` header. Do not
 On Aegis, the Hermes Open Brain bridge is repointed to this local endpoint:
 
 ```text
-/Users/hermes/.hermes/bin/openbrain-mcp-wrapper.sh
+~/.hermes/bin/openbrain-mcp-wrapper.sh
 ```
 
 The wrapper runs the Hermes Python environment, calls `http://127.0.0.1:8787/functions/v1/open-brain-mcp`, and loads the local access key from this recipe's `.env` file at runtime. It does not embed the key.
@@ -86,7 +86,7 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8787
 To write ignored local dashboard env files for the maintained Next dashboards:
 
 ```sh
-node /Users/hermes/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain/scripts/repoint-dashboard-envs.mjs
+node ~/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain/scripts/repoint-dashboard-envs.mjs
 ```
 
 The script writes `open-brain-dashboard-next/.env.local` and `open-brain-dashboard-pro/.env.local` with `NEXT_PUBLIC_API_URL=http://127.0.0.1:8787`, generates `SESSION_SECRET`, and does not store `BRAIN_ACCESS_KEY`; enter the local key at dashboard login.
@@ -152,7 +152,7 @@ The local Agent Memory layer writes per-turn memory directly into first-class `a
 To repoint the two Aegis Hermes runtime env files without printing the key:
 
 ```sh
-node /Users/hermes/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain/scripts/configure-agent-memory-envs.mjs
+node ~/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain/scripts/configure-agent-memory-envs.mjs
 ```
 
 Use `--dry-run` first when auditing. The script reads `BRAIN_ACCESS_KEY` from this recipe's `.env`, writes `OPENBRAIN_URL=http://127.0.0.1:8787/agent-memory-api`, stores `OPENBRAIN_KEY` only in the target env files, creates local backups, and prints `<redacted>` for secret values.
@@ -162,7 +162,7 @@ Use `--dry-run` first when auditing. The script reads `BRAIN_ACCESS_KEY` from th
 First export the hosted Open Brain tables with `OB1/recipes/brain-backup/backup-brain.mjs`. Then replay the thoughts backup into Aegis:
 
 ```sh
-cd /Users/hermes/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain
+cd ~/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain
 node scripts/import-supabase-backup.mjs --dry-run ../brain-backup/backup
 node scripts/import-supabase-backup.mjs --verify ../brain-backup/backup
 curl -fsS "http://127.0.0.1:8787/count?migrated_from=open-brain-supabase-backup" \
@@ -191,7 +191,7 @@ curl -fsS "http://127.0.0.1:8787/backup/first-class/count?table=agent_memories" 
 Before proposing hosted Supabase cleanup, run the local readiness gate:
 
 ```sh
-node /Users/hermes/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain/scripts/cutover-readiness.mjs --json
+node ~/Projects/Sea\ Ranch\ AI/OB1/recipes/aegis-local-brain/scripts/cutover-readiness.mjs --json
 ```
 
 The script does not require Docker Compose. It checks the Aegis-local HTTP health endpoint, hosted backup preflight metadata, latest backup manifest, imported backup count, dashboard `.env.local` repointing, the Hermes Open Brain bridge, and Codex rules. It prints safe metadata only and never prints `BRAIN_ACCESS_KEY` or `SUPABASE_SERVICE_ROLE_KEY`.

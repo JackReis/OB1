@@ -63,7 +63,7 @@ For Aegis-local testing, set:
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8787
 ```
 
-Use the local `BRAIN_ACCESS_KEY` from `/Users/hermes/Projects/Sea Ranch AI/OB1/recipes/aegis-local-brain/.env` when logging in.
+Use the local `BRAIN_ACCESS_KEY` from `~/Projects/Sea Ranch AI/OB1/recipes/aegis-local-brain/.env` when logging in.
 
 ## Authentication
 

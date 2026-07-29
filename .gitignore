@@ -40,3 +40,8 @@ clients/katherine-telegram-bot/bot.err.log
 
 # Backup env files
 recipes/aegis-local-brain/.env.bak-*
+recipes/family-local-brain/.env.bak-*
+recipes/katherine-local-brain/.env.bak-*
+
+# Pre-edit backup artifacts
+*.orig-*

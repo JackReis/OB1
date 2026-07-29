@@ -132,14 +132,14 @@ def id_map():
 def state_path():
     return os.environ.get(
         "FAMILY_ROUTER_STATE",
-        "/Users/hermes/Projects/Sea Ranch AI/OB1/clients/family-hermes/state/session_scope.json",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "session_scope.json"),
     )
 
 
 def log_path():
     return os.environ.get(
         "FAMILY_ROUTER_LOG",
-        "/Users/hermes/Projects/Sea Ranch AI/OB1/clients/family-hermes/state/router.log",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "router.log"),
     )
 
 

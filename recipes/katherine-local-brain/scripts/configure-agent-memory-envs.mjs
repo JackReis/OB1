@@ -3,11 +3,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import os from "node:os";
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const RECIPE_DIR = path.resolve(SCRIPT_DIR, "..");
+
+function expandHome(p) {
+  if (typeof p !== "string") return p;
+  if (p.startsWith("~/") || p === "~") return path.join(os.homedir(), p.slice(1));
+  return p;
+}
+
 const DEFAULT_ENV_FILES = [
-  "/Users/hermes/.hermes/.env",
-  "/Users/hermes/.hermes/profiles/aegis/.env",
+  "~/.hermes/.env",
+  "~/.hermes/profiles/aegis/.env",
 ];
 
 function usage() {
@@ -176,7 +185,7 @@ async function main() {
   }
 
   for (const target of args.envFiles) {
-    const resolved = path.resolve(target);
+    const resolved = expandHome(path.resolve(target));
     const before = readIfExists(resolved);
     const after = updateEnvText(before, updates);
     const changed = before !== after;
