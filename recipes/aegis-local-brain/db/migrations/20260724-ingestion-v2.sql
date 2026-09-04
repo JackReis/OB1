@@ -19,16 +19,35 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_thoughts_ingest_key
   ON public.thoughts (ingest_key) WHERE ingest_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_thoughts_source_version
   ON public.thoughts (source_type, source_uri, source_version);
-UPDATE public.thoughts
-SET embedding_provider = COALESCE(embedding_provider, 'ollama'),
-    embedding_model = COALESCE(embedding_model, 'mxbai-embed-large'),
-    embedding_dimensions = COALESCE(embedding_dimensions, 1024),
-    embedding_version = COALESCE(embedding_version, 'ollama:mxbai-embed-large:1024:legacy'),
-    embedding_normalized = COALESCE(embedding_normalized, false),
-    embedded_at = COALESCE(embedded_at, updated_at, created_at),
-    indexed_at = COALESCE(indexed_at, updated_at, created_at)
-WHERE embedding IS NOT NULL
-  AND embedding_version IS NULL;
+
+-- Backfill embedding metadata in batches to avoid MVCC rewrite hazard
+-- and WAL bloat from a single UPDATE over ~160k rows.
+-- Each iteration updates at most 5000 rows; the loop exits when no
+-- remaining rows match the WHERE predicate.
+-- Functional equivalence: identical COALESCE semantics to the original
+-- single UPDATE — same SET expressions, same WHERE clause.
+DO $$
+DECLARE
+  batch_size CONSTANT INTEGER := 5000;
+  rows_updated INTEGER;
+BEGIN
+  LOOP
+    UPDATE public.thoughts
+    SET embedding_provider = COALESCE(embedding_provider, 'ollama'),
+        embedding_model = COALESCE(embedding_model, 'mxbai-embed-large'),
+        embedding_dimensions = COALESCE(embedding_dimensions, 1024),
+        embedding_version = COALESCE(embedding_version, 'ollama:mxbai-embed-large:1024:legacy'),
+        embedding_normalized = COALESCE(embedding_normalized, false),
+        embedded_at = COALESCE(embedded_at, updated_at, created_at),
+        indexed_at = COALESCE(indexed_at, updated_at, created_at)
+    WHERE embedding IS NOT NULL
+      AND embedding_version IS NULL
+    LIMIT batch_size;
+
+    GET DIAGNOSTICS rows_updated = ROW_COUNT;
+    EXIT WHEN rows_updated = 0;
+  END LOOP;
+END $$;
 
 COMMIT;
 
